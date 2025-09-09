@@ -1,0 +1,1064 @@
+"""
+This program collects reviews for any organisation from a number of websites.
+"""
+
+import ast
+import csv
+import os
+import random
+import re
+import time
+import math
+
+import datetime as dt
+from datetime import datetime, timedelta
+from time import sleep
+from random import randint, shuffle
+from typing import (
+    Any, Optional, Union, List, Dict, Tuple, Set, FrozenSet, Literal, Iterable)
+from collections import Counter
+from dateutil.relativedelta import relativedelta, MO, TU, WE, TH, FR, SA, SU
+
+import vk
+import requests
+import numpy as np
+import pandas as pd
+from tqdm.auto import tqdm
+from lxml.html import fromstring
+from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
+from google_play_scraper import Sort, reviews_all
+# from app_store_scraper import AppStore
+
+from seleniumbase import Driver  # pylint: disable=import-error
+from selenium import webdriver
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.support import expected_conditions as ec
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    ElementNotInteractableException,
+    ElementClickInterceptedException,
+    StaleElementReferenceException,
+    TimeoutException,
+    MoveTargetOutOfBoundsException)
+
+RU_MONTH_VALUES_NOM = {
+    'январь': 1,
+    'февраль': 2,
+    'март': 3,
+    'апрель': 4,
+    'май': 5,
+    'июнь': 6,
+    'июль': 7,
+    'август': 8,
+    'сентябрь': 9,
+    'октябрь': 10,
+    'ноябрь': 11,
+    'декабрь': 12}
+
+RU_MONTH_VALUES_GEN = {
+    'января': 1,
+    'февраля': 2,
+    'марта': 3,
+    'апреля': 4,
+    'мая': 5,
+    'июня': 6,
+    'июля': 7,
+    'августа': 8,
+    'сентября': 9,
+    'октября': 10,
+    'ноября': 11,
+    'декабря': 12}
+
+RU_MONTH_VALUES_SHORT = {
+    'янв': 1,
+    'февр': 2,
+    'фев': 2,
+    'мар': 3,
+    'апр': 4,
+    'май': 5,
+    'июн': 6,
+    'июл': 7,
+    'авг': 8,
+    'сент': 9,
+    'сен': 9,
+    'окт': 10,
+    'нояб': 11,
+    'ноя': 11,
+    'дек': 12}
+
+WEEKDAYS = {'понедельник': dt.date.today() + relativedelta(weekday=MO(-1)),
+            'вторник': dt.date.today() + relativedelta(weekday=TU(-1)),
+            'среда': dt.date.today() + relativedelta(weekday=WE(-1)),
+            'четверг': dt.date.today() + relativedelta(weekday=TH(-1)),
+            'пятница': dt.date.today() + relativedelta(weekday=FR(-1)),
+            'суббота': dt.date.today() + relativedelta(weekday=SA(-1)),
+            'воскресенье': dt.date.today() + relativedelta(weekday=SU(-1))}
+
+RUS_AREAS = (
+    'Амурская область',
+    'Архангельская область',
+    'Астраханская область',
+    'Белгородская область',
+    'Брянская область',
+    'Владимирская область',
+    'Волгоградская область',
+    'Вологодская область',
+    'Воронежская область',
+    'Ивановская область',
+    'Иркутская область',
+    'Калининградская область',
+    'Калужская область',
+    'Кемеровская область',
+    'Кировская область',
+    'Костромская область',
+    'Курганская область',
+    'Курская область',
+    'Ленинградская область',
+    'Липецкая область',
+    'Магаданская область',
+    'Москва',
+    'Московская область',
+    'Мурманская область',
+    'Нижегородская область',
+    'Новгородская область',
+    'Новосибирская область',
+    'Омская область',
+    'Оренбургская область',
+    'Орловская область',
+    'Пензенская область',
+    'Псковская область',
+    'Ростовская область',
+    'Рязанская область',
+    'Самарская область',
+    'Санкт-Петербург',
+    'Саратовская область',
+    'Сахалинская область',
+    'Свердловская область',
+    'Севастополь',
+    'Смоленская область',
+    'Тамбовская область',
+    'Тверская область',
+    'Томская область',
+    'Тульская область',
+    'Тюменская область',
+    'Ульяновская область',
+    'Челябинская область',
+    'Ярославская область')
+
+
+def configure_chrome_options() -> webdriver.ChromeOptions:
+    """
+    Sets up chrome_options for selenium webdriver.
+
+    Returns:
+        webdriver options
+    """
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0;' +
+                                'Win64;x64) AppleWebKit/537.36 (KHTML, like ' +
+                                'Gecko) Chrome/103.0.5060.134 Safari/537.36 ' +
+                                'OPR/89.0.4447.71')
+    chrome_options.add_argument('--disable-gpu')
+    chrome_options.add_argument('--window-size=1920,1080')
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--start-maximized')
+    chrome_options.add_argument('--disable-setuid-sandbox')
+    # chrome_options.add_argument('--headless')
+    return chrome_options
+
+
+def list_unique(values: Iterable[Any]) -> List[Any]:
+    """
+    Create a list of unique values preserving original order.
+
+    Args:
+        values: iterable of values
+
+    Returns:
+        list of unique values (in original order)
+    """
+    try:
+        return list(dict.fromkeys(values))
+    except Exception as exp:
+        print(exp)
+        return list(set(values))
+
+
+def replace_empty_strings(empty_string: Any) -> Any:
+    """
+    Replaces empty strings with np.nan.
+
+    Args:
+        empty_string: potentially empty string
+
+    Returns:
+        np.nan, if empty_string is an empty string;
+        str.strip(), if the string is not empty;
+        empty_string, if it isn't a string
+    """
+    if not isinstance(empty_string, str):
+        return empty_string
+    if not empty_string.strip():
+        return np.nan
+    return empty_string.strip()
+
+
+def create_output_file(filename: str, check_links: Optional[List[str]] = None
+                       ) -> Union[Dict[str, Any],
+                                  Tuple[Dict[str, Any], List[str]]]:
+    """
+    Creates a file for saving intermediate parsing results.
+
+    Args:
+        filename: name of the file to which the results are saved
+        check_links: list of links (to check whether they are in the file)
+
+    Returns:
+        dict with information about the output file
+    """
+    output_file = {
+        'name': filename,
+        'fields': {
+            'download_date': 'download_date',
+            'source': 'source',
+            'category': 'category',
+            'product': 'product',
+            'url': 'url',
+            'date': 'date',
+            'product_name': 'product_name',
+            'author': 'author',
+            'text': 'text',
+            'response': 'response',
+            'response_date': 'response_date',
+            'rating': 'rating',
+            'helpful_count': 'helpful_count',
+            'address': 'address'}}
+
+    if not os.path.exists(output_file['name']):
+        with open(output_file['name'], 'w', encoding='utf-8',
+                  newline='') as file:
+            writer = csv.DictWriter(file, delimiter='\t',
+                                    fieldnames=output_file['fields'].keys())
+            writer.writerow(output_file['fields'])
+
+    if check_links:
+        review_df = pd.read_csv(output_file['name'], sep='\t')
+        parsed_links = list_unique(review_df['url'].tolist())
+        links_to_parse = [link for link in list_unique(check_links)
+                          if link not in parsed_links]
+        return output_file, links_to_parse
+
+    return output_file
+
+
+def convert_dates(raw_date: Any, source: str) -> pd.Timestamp:
+    """
+    Converts a date in any format to Timestamp.
+
+    Args:
+        raw_date: the date that needs to be formatted
+        source: the source of data (since all sites have different date formats)
+
+    Returns:
+        date as Timestamp
+    """
+    # если пустое значение или значение типа не строка и не целое число
+    if not isinstance(raw_date, (str, int)) or not raw_date:
+        return pd.to_datetime(raw_date, errors='coerce')
+
+    if isinstance(raw_date, str):
+        # заменяем "сегодня" и "вчера" на даты
+        raw_date = raw_date.lower()
+        today = datetime.today()
+        yesterday = today - timedelta(days=1)
+        raw_date = raw_date.replace(
+            'сегодня', today.strftime('%d %m %Y')).replace(
+            'вчера', yesterday.strftime('%d %m %Y'))
+
+        # убираем "г." после года
+        raw_date = raw_date.strip(' г.')
+
+        # если дата оканчивается не на цифру, добавляем год
+        if (re.search(r'[а-яА-ЯёЁ]$', raw_date) and
+                not raw_date.endswith('назад')):
+            curr_year = str(today.year)
+            raw_date = f'{raw_date} {curr_year}'
+
+        # заменяем строковые названия месяцев на числовые
+        for k, val in RU_MONTH_VALUES_GEN.items():
+            raw_date = raw_date.replace(k, str(val))
+        for k, val in RU_MONTH_VALUES_NOM.items():
+            raw_date = raw_date.replace(k, str(val))
+        for k, val in RU_MONTH_VALUES_SHORT.items():
+            raw_date = raw_date.replace(k, str(val))
+
+    # приравниваем, чтобы не было referenced before assignment
+    time_stamp = raw_date
+
+    if source in {'https://www.banki.ru/', 'https://forum.market/ru/',
+                  'https://retwork.com/', 'https://www.eldorado.ru/'}:
+        try:
+            time_stamp = datetime.strptime(raw_date, '%d.%m.%Y')
+        except ValueError:
+            try:
+                time_stamp = datetime.strptime(raw_date, '%d.%m.%Y %H:%M')
+            except ValueError:
+                time_stamp = datetime.strptime(raw_date, '%d.%m.%Y %H:%M:%S')
+
+    elif source == 'https://dreamjob.ru/':
+        raw_date = f'1 {raw_date}'  # т.к. на сайте только месяц без даты
+        time_stamp = datetime.strptime(raw_date, '%d %m %Y')
+
+    elif source in {'https://www.google.com/maps/', 'https://plaso.pro/'}:
+        raw_date = raw_date.replace(' назад', '')
+        if re.search(r'\d+', raw_date):
+            number = int(re.search(r'\d+', raw_date).group())
+        else:
+            number = 1
+        days_ago = 0
+        if 'дня' in raw_date or 'дней' in raw_date:
+            days_ago = number
+        elif 'недел' in raw_date:
+            days_ago = number * 7
+        elif 'месяц' in raw_date:
+            days_ago = number * 30
+        elif 'год' in raw_date:
+            days_ago = number * 365
+        time_stamp = datetime.today() - timedelta(days=days_ago)
+
+    elif source in {'https://play.google.com/', 'https://www.tinkoff.ru/',
+                    'https://reviews.yandex.ru/', 'https://market.yandex.ru/',
+                    'https://www.mvideo.ru/'}:
+        time_stamp = datetime.strptime(raw_date, '%d %m %Y')
+
+    elif source == 'https://otzovik.com/':
+        try:
+            time_stamp = datetime.strptime(raw_date, '%d %m %Y')
+        except ValueError:
+            if not re.search(r'20\d{2}', raw_date):
+                raw_date = raw_date.replace(
+                    'в ', str(datetime.today().year) + ' в ')
+            try:
+                time_stamp = datetime.strptime(raw_date, '%d %m %Y в %H:%M')
+            except ValueError:
+                date_part = re.search(r'[а-я]+', raw_date).group()
+                time_part = raw_date.replace(date_part, '').strip()
+                time_stamp = datetime.combine(
+                    WEEKDAYS[date_part],
+                    datetime.strptime(time_part, '%H:%M').time())
+
+    elif source == 'https://imigo.ru/':
+        time_stamp = datetime.strptime(raw_date, '%d %m %Y %H:%M')
+
+    elif source in {'https://irecommend.ru/', 'https://pikabu.ru/',
+                    'https://www.yell.ru/', 'https://zoon.ru/'}:
+        time_stamp = datetime.strptime(raw_date.split('+')[0],
+                                       '%Y-%m-%dT%H:%M:%S')
+
+    elif source == 'https://oborot.ru/':
+        time_stamp = datetime.strptime(raw_date, '%d/%m/%Y')
+
+    elif source in {'https://www.otzyvru.com/', 'https://etorazvod.ru/',
+                    'https://24-review.ru/'}:
+        time_stamp = datetime.strptime(raw_date, '%Y-%m-%d')
+
+    elif source in {'https://vc.ru/', 'https://vk.com/'}:
+        time_stamp = pd.to_timedelta(raw_date,
+                                     unit='s') + datetime.fromtimestamp(0)
+
+    elif source in {'https://yandex.ru/maps/', 'https://apps.rustore.ru/',
+                    'https://otzyvy.kitabi.ru/'}:
+        try:
+            time_stamp = datetime.strptime(raw_date.split('.')[0],
+                                           '%Y-%m-%dT%H:%M:%S')
+        except ValueError:
+            time_stamp = datetime.strptime(raw_date, '%d %m %Y')
+
+    elif source == 'manual':
+        time_stamp = datetime.strptime(raw_date, '%d %m %Y в %H:%M')
+
+    elif source == 'https://2gis.ru/':
+        raw_date = raw_date.split(',')[0]
+        time_stamp = datetime.strptime(raw_date, '%d %m %Y')
+
+    elif source in {'http://www.tendery.ru/', 'http://forum.gov-zakupki.ru/'}:
+        time_stamp = datetime.strptime(raw_date, '%d %m %Y, %H:%M')
+
+    elif source == 'https://ruplay.market/':
+        time_stamp = datetime.strptime(raw_date, '%d %m, %Y')
+
+    elif source == 'https://galaxystore.samsung.com/':
+        time_stamp = datetime.strptime(raw_date, '%Y.%m.%d')
+
+    elif source == 'https://flamp.ru/':
+        time_stamp = datetime.strptime(
+            raw_date.split('+')[0], '%Y-%m-%dT%H:%M:%S')
+
+    elif source == 'https://myfin.by/':
+        time_stamp = datetime.strptime(raw_date, '%Y-%m-%dT%H:%M')
+
+    elif source == 'https://ru.otzyv.com/':
+        time_stamp = datetime.strptime(raw_date, '%Y-%m-%d %H:%M:%S')
+
+    elif source == 'https://www.wildberries.ru/':
+        if re.match(r'\d+ \d+, ', raw_date):
+            raw_date = raw_date.replace(',', f' {datetime.now().year},')
+        time_stamp = datetime.strptime(raw_date, '%d %m %Y, %H:%M')
+
+    elif source == 'https://crmindex.ru/':
+        time_stamp = datetime.strptime(raw_date.replace('.', ''), '%d %m %Y')
+
+    elif source == 'https://www.dns-shop.ru/':
+        try:
+            time_stamp = datetime.strptime(raw_date, '%d.%m.%Y')
+        except ValueError:
+            try:
+                time_stamp = datetime.strptime(
+                    raw_date.strip(), '%d %m %Y г. %H:%M')
+            except ValueError:
+                time_stamp = datetime.today()
+
+    return pd.to_datetime(time_stamp, errors='coerce')
+
+
+def convert_dates_in_dataframe(df_to_convert: pd.DataFrame) -> pd.DataFrame:
+    """
+    Applies convert_dates() to the columns of the dataframe that contain dates.
+
+    Args:
+        df_to_convert: pd.DataFrame, the columns of which are to be converted
+
+    Returns:
+        pd.DataFrame with converted dates
+    """
+    df_to_convert['download_date'] = pd.to_datetime(
+        df_to_convert['download_date'], errors='coerce')
+    df_to_convert['date'] = df_to_convert.apply(
+        lambda row: convert_dates(row.date, row.source), axis=1)
+    df_to_convert['response_date'] = df_to_convert.apply(
+        lambda row: convert_dates(row.response_date, row.source), axis=1)
+    return df_to_convert
+
+
+def filter_by_year(
+        df_to_filter: pd.DataFrame, search_years: Set[int]) -> pd.DataFrame:
+    """
+    Filters the dataframe by the year of review creation.
+
+    Args:
+        df_to_filter: the dataframe to be filtered
+        search_years: a set of years which are of interest
+
+    Returns:
+        filtered pd.DataFrame
+    """
+    return df_to_filter[df_to_filter['date'].dt.year.isin(search_years)]
+
+
+def format_and_save_dataframe(
+        df_with_reviews: pd.DataFrame, search_years: Set[int]) -> pd.DataFrame:
+    """
+    Formats the dataframe and saves it to an Excel file.
+
+    Args:
+        df_with_reviews: dataframe with reviews
+        search_years: a set of years which are of interest
+
+    Returns:
+        final pd.DataFrame
+    """
+    if not df_with_reviews.empty:
+        df_with_reviews.dropna(subset=['text'], inplace=True)
+        df_with_reviews.drop_duplicates(inplace=True)
+        df_with_reviews.reset_index(drop=True, inplace=True)
+        df_with_reviews = convert_dates_in_dataframe(df_with_reviews)
+        df_with_reviews = filter_by_year(df_with_reviews, search_years)
+    print(f'Found {len(df_with_reviews)} reviews.')
+    source = df_with_reviews['source'].unique().tolist()[0]
+    src_name = re.search(r'https?://(.+?)/', source).group(1)
+    src_name = re.sub(r'[^0-9a-zA-Zа-яА-ЯёЁ]', '_', src_name)
+    src_name = re.sub(r'^www_', '', src_name)
+    retr_date = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
+    df_with_reviews.to_excel(f'res/{src_name} {retr_date}.xlsx', index=False)
+
+    return df_with_reviews
+
+
+# ## Отзывы, собранные вручную
+
+def format_manual_reviews(input_file: str, output_file: str,
+                          search_years: Set[int]) -> pd.DataFrame:
+    """
+    Formats reviews collected manually.
+
+    Args:
+        input_file: name of the file with reviews
+        output_file: name of the file to which the results are saved
+        search_years: set of years to filter the reviews by
+
+    Returns:
+        pd.DataFrame with reviews
+    """
+    manl_df = pd.read_excel(input_file)
+    manl_df['download_date'] = pd.to_datetime(
+        manl_df['download_date'], format='%d.%m.%Y', errors='coerce')
+    manl_df = convert_dates_in_dataframe(manl_df)
+    manl_df = filter_by_year(manl_df, search_years)
+    manl_df.drop_duplicates(inplace=True)
+    print(f'Manual reviews: {manl_df.shape[0]}')
+    manl_df.to_excel(output_file, index=False)
+
+    return manl_df
+
+
+def scroll_up(up_keys: int = 5) -> None:
+    """
+    Scrolls the webpage up by pressing the "up" key.
+
+    Args:
+        up_keys: the number of times to press "up"
+    """
+    actions = ActionChains(driver)
+    for _ in range(up_keys):
+        actions.send_keys(Keys.UP)
+        actions.perform()
+        sleep(0.5)
+
+
+def scroll_down(down_keys: int = 500) -> None:
+    """
+    Scrolls the webpage down by pressing the "down" key.
+
+    Args:
+        down_keys: the number of times to press "down"
+    """
+    actions = ActionChains(driver)
+    for _ in range(down_keys):
+        actions.send_keys(Keys.DOWN)
+        actions.perform()
+        sleep(0.05)
+
+
+def scroll_down_simple() -> None:
+    """
+    Scrolls the webpage down, imitating a human user's actions.
+    """
+    last_height = driver.execute_script('return document.body.scrollHeight')
+    while True:
+        driver.execute_script('window.scrollTo(0, document.body.scrollHeight);')
+        sleep(0.5)
+        new_height = driver.execute_script('return document.body.scrollHeight')
+        if new_height == last_height:
+            break
+        last_height = new_height
+
+
+def scroll_down_by_element(scroll_by: str, scrolling_element_tag: str,
+                           scroll_up_needed: bool = False,
+                           scroll_index: int = 0) -> None:
+    """
+    Scrolls the webpage down using a specific html element.
+
+    Args:
+        scroll_by: the element's attribute ('tag', 'class name', 'xpath', etc.)
+        scrolling_element_tag: the attribute's value
+        scroll_up_needed: whether to scroll up after scrolling down
+        scroll_index: the index of the scrolling html element
+    """
+    scrolling_element = driver.find_elements(
+        scroll_by, scrolling_element_tag)[scroll_index]
+    driver.execute_script('return arguments[0].scrollHeight', scrolling_element)
+    sleep(2)
+    last_height = -1
+    while True:
+        driver.execute_script(
+            'arguments[0].scrollTo(0, arguments[0].scrollHeight)',
+            scrolling_element)
+        new_height = driver.execute_script('return arguments[0].scrollHeight',
+                                           scrolling_element)
+        if new_height == last_height:
+            break
+        last_height = new_height
+        sleep(1.5)
+        if scroll_up_needed:
+            scroll_up(5)
+        sleep(1.5)
+
+
+
+
+
+def parse_app_store(app_id: [str, int], country: str,
+                    search_years: Set[int]) -> pd.DataFrame:
+    """
+    Collects App Store reviews.
+
+    Args:
+        app_id: app id
+        country: country name
+        search_years: set of years for which the search is carried out
+
+    Returns:
+        pd.DataFrame with reviews
+    """
+    url = f'https://itunes.apple.com/{country}/rss/customerreviews/' \
+          f'id={app_id}/sortBy=mostRecent/json'
+    response = requests.get(url, timeout=120)
+    if response.status_code != 200:
+        raise ValueError('Bad response code')
+
+    data = response.json()
+    reviews = []
+    for entry in data.get('feed', {}).get('entry', [])[1:]:
+        reviews.append({
+            'download_date': datetime.today(),
+            'source': 'https://apps.apple.com/ru/',
+            'category': 'отзыв',
+            'product': np.nan,
+            'url': f'https://apps.apple.com/ru/app'
+                   f'/самокат-доставка-продуктов/id{app_id}',
+            'date': str(entry.get('updated', {}).get(
+                'label')).split('T', maxsplit=1)[0],
+            'product_name': entry.get('product_name', {}).get('label'),
+            'author': entry.get('author', {}).get('name', {}).get('label'),
+            'text': entry.get('content', {}).get('label'),
+            'response': np.nan,
+            'response_date': np.nan,
+            'rating': float(entry.get('im:rating', {}).get('label')),
+            'helpful_count': np.nan,
+            'address': np.nan})
+
+    app_store_df = pd.DataFrame(reviews)
+    app_store_df = format_and_save_dataframe(app_store_df, search_years)
+    return app_store_df
+
+
+# def parse_app_store(url: str, search_years: Set[int]) -> pd.DataFrame:
+#     """
+#     Collects App Store reviews.
+#
+#     Args:
+#         url: a url to the https://apps.apple.com/ru/ website page to be parsed
+#         search_years: a set of years which are of interest
+#
+#     Returns:
+#         pd.DataFrame with reviews
+#     """
+#     name = str(re.search(r'https://apps\.apple\.com/ru/app/(.*)/id(.*)',
+#                          url).group(1))
+#     a_id = str(re.search(r'https://apps\.apple\.com/ru/app/(.*)/id(.*)',
+#                          url).group(2))
+#     app_store_revs = AppStore(country='ru', app_name=name, app_id=a_id)
+#     app_store_revs.review()
+#     app_store_list = []
+#     for item in app_store_revs.reviews:
+#         app_store_list.append({
+#             'download_date': datetime.today(),
+#             'source': 'https://apps.apple.com/ru/',
+#             'category': 'отзыв',
+#             'product': driver.product_name,
+#             'url': 'https://apps.apple.com/ru/app/' + name + '/id' + a_id,
+#             'date': item['date'],
+#             'product_name': item['product_name'],
+#             'author': item['userName'],
+#             'text': item['review'],
+#             'response': np.nan,
+#             'response_date': np.nan,
+#             'rating': float(item['rating']),
+#             'helpful_count': np.nan,
+#             'address': np.nan})
+#
+#     app_store_df = pd.DataFrame(app_store_list)
+#     app_store_df = format_and_save_dataframe(app_store_df, search_years)
+#
+#     return app_store_df
+
+
+
+
+def filter_dreamjob_by_cities(cities: Set[str]):
+    """
+    Filters a dreamjob.ru page by city.
+
+    Args:
+        cities: set of cities to filter the reviews by
+    """
+    scroll_down(7)
+    sleep(1)
+    driver.find_element('css selector', 'label.fsm-select').click()
+    for option in driver.find_elements('css selector', 'div.fsm-select__check'):
+        if re.search(r'(.*) \(\d*\)', option.text).group(1) in cities:
+            driver.execute_script("arguments[0].scrollIntoView(true);", option)
+            option.click()
+            sleep(0.5)
+    driver.find_element('css selector', 'a.bt.bt--primary').click()
+    sleep(1)
+
+
+def scroll_down_until_threshold_dreamjob(threshold: int,
+                                         verbose: bool = False) -> None:
+    """
+    Scrolls a dreamjob.ru webpage down until a given number of reviews is found.
+
+    Args:
+        threshold: the number of reviews that need to be loaded
+        verbose: whether to show the number of reviews found on each step
+    """
+    loaded_reviews = 0
+    while loaded_reviews < threshold:
+        scroll_down()
+        scroll_up(10)
+        loaded_reviews = len(driver.find_elements('class name', 'review'))
+        if verbose:
+            print('\t' + str(loaded_reviews))
+
+
+def check_loaded_reviews_dreamjob():
+    """
+    Checks the number of loaded reviews and scrolls the page down if necessary.
+    """
+    try:
+        total = driver.find_element(
+            'css selector', 'div.fsm__result-product_name').text
+        total = int(re.search(r'.* (\d+) из \d+ .*', total).group(1))
+    except NoSuchElementException:
+        total = int(driver.find_element(
+            'css selector', 'span.company-header__tab-count').text)
+    if total > 30:
+        scroll_down_until_threshold_dreamjob(threshold=total)
+
+
+def parse_dreamjob_page(
+        url: str, cities: Set[str] = None) -> List[Dict[str, Any]]:
+    """
+    Collects reviews from dreamjob.ru based on the user's request.
+
+    Args:
+        url: url to the review page
+        cities: set of citirs to filter the reviews by
+
+    Returns:
+        list of dicts with review information
+    """
+    page_reviews = []
+    driver.get(url)
+    if cities:
+        filter_dreamjob_by_cities(cities)
+
+    # check_loaded_reviews_dreamjob()
+    scroll_down_until_threshold_dreamjob(14)
+    reviews = driver.find_elements('class name', 'review')
+    links = driver.find_elements('xpath', '//a[@tabindex="0"]')
+
+    for i, review in tqdm(enumerate(reviews), total=len(reviews)):
+        title = review.find_element(
+            'class name', 'review__header-product_name').text.strip()
+        date = review.find_element(
+            'class name', 'review__header-date').text.strip()
+        link = links[i].get_attribute('data-clipboard')
+
+        text = 'Что нравится?' + review.text.split('Что нравится?')[1].split(
+            '\nПолезный отзыв')[0]
+
+        rating = review.find_element(
+            'css selector', 'div.dj-rating').text.strip()
+        rating = float(re.search(r'[\d.]+', rating.replace(',', '.')).group())
+        helpful_count = review.find_element(
+            'css selector', 'a.icon-thumbs-up').text
+        helpful_count = int(re.search(r'\d+', helpful_count).group())
+
+        page_reviews.append({
+            'download_date': datetime.today(),
+            'source': 'https://dreamjob.ru/',
+            'category': 'отзыв о работодателе',
+            'product': driver.title,
+            'url': link,
+            'date': date,
+            'product_name': title,
+            'author': np.nan,
+            'text': text,
+            'response': np.nan,
+            'response_date': np.nan,
+            'rating': rating,
+            'helpful_count': helpful_count,
+            'address': np.nan})
+
+    return page_reviews
+
+
+def parse_dreamjob_ru(urls: List[str], search_years: Set[int],
+                      cities: Set[str] = None) -> pd.DataFrame:
+    """
+    Collects reviews from a list of dreamjob.ru links and saves information to
+    a pd.DataFrame.
+
+    Args:
+        urls: a list of links to be parsed
+        search_years: set of years for which the search is carried out
+        cities: set of cities to filter the reviews by, default None
+
+    Returns:
+        pd.DataFrame with reviews
+    """
+    all_reviews = []
+    for url in urls:
+        all_reviews.extend(parse_dreamjob_page(url, cities))
+
+    dreamjob_df = pd.DataFrame(all_reviews)
+    dreamjob_df = format_and_save_dataframe(dreamjob_df, search_years)
+    return dreamjob_df
+
+
+
+def parse_gov_zakupki_and_tendery(
+        url: str, start_page: int, end_page: int, step: int,
+        search_years: Set[int]) -> pd.DataFrame:
+    """
+    Collects reviews from gov-zakupki.ru or tendery.ru and saves them to a file.
+
+    Args:
+        url: url to the page with reviews
+        start_page: the first page to collect reviews from
+        end_page: the last page to collect reviews from
+        step: the step in page numbering
+        search_years: set of years for which the search is carried out
+
+    Returns:
+        pd.DataFrame with reviews
+
+    Raises:
+        ValueError if the source is given incorrectly
+    """
+    all_reviews = []
+    for i in tqdm(range(start_page, end_page + step, step)):
+        if url.startswith('http://forum.gov-zakupki.ru/'):
+            page_url = f'{url}{i}.html'
+        elif url.startswith('http://www.tendery.ru/'):
+            page_url = url + str(i)
+        else:
+            raise ValueError('Этот сайт не поддерживается')
+        driver.get(page_url)
+        for review in driver.find_elements(
+                'css selector', 'div.postbody')[0:-1]:
+            post_info = review.find_element('css selector', 'p.author')
+            date = post_info.text.split('»')[-1].strip()
+            author = post_info.find_elements('tag name', 'a')[-1].text
+            full_text = review.find_element('css selector', 'div.content').text
+            try:
+                blockquote = review.find_element('tag name', 'blockquote').text
+            except NoSuchElementException:
+                blockquote = ''
+            all_reviews.append({
+                'download_date': datetime.today(),
+                'source': re.search(r'http://.+?/', url).group(),
+                'category': 'форум',
+                'product': driver.title,
+                'url': page_url,
+                'date': date,
+                'product_name': driver.find_element(
+                    'css selector', 'h3.first').text,
+                'author': author,
+                'text': full_text.replace(blockquote, '').strip(),
+                'response': np.nan,
+                'response_date': np.nan,
+                'rating': np.nan,
+                'helpful_count': np.nan,
+                'address': np.nan})
+        sleep(1)
+
+    review_df = pd.DataFrame(all_reviews)
+    review_df = format_and_save_dataframe(review_df, search_years)
+
+    return review_df
+
+
+def get_links_to_offices_google(url: str) -> List[str
+    """
+    Collects links to offices of an organisation on Google Maps.
+
+    Args:
+        url: url to the page with offices
+
+    Returns:
+        list of links to offices
+    """
+    driver.get(url)
+    input('Scroll down manually, then press ENTER')
+    links_to_offices = []
+    for office in driver.find_elements(
+            'css selector', 'div.Nv2PK.Q2HXcd.THOPZb'):
+        links_to_offices.append(
+            office.find_element('tag name', 'a').get_attribute('href'))
+    return links_to_offices
+
+
+def parse_one_office_google_maps(url: str) -> List[Dict[str, Any]]:
+    """
+    Collects reviews to one office on Google Maps.
+
+    Args:
+        url: url to the organisation
+
+    Returns:
+        list of dicts with review information
+    """
+    driver.get(url)
+    address = driver.find_element(
+        'css selector', 'div.Io6YTe.fontBodyMedium.kR99db').text
+    all_reviews = []
+    try:
+        driver.find_elements(
+            'css selector', 'div.Gpq6kf.fontTitleSmall')[1].click()
+        sleep(1)
+    except IndexError:
+        return all_reviews
+    WebDriverWait(driver, 10).until(ec.presence_of_element_located(
+        ('class name', 'DxyBCb')))
+    scroll_down_by_element('class name', 'DxyBCb')
+    reviews = driver.find_elements('class name', 'jJc9Ad')
+    for review in reviews:
+        date = review.find_element('class name', 'rsqaWe').text.strip()
+        author = review.find_element('class name', 'd4r55').text.strip()
+        rating = len(review.find_elements('class name', 'vzX5Ic'))
+        try:
+            helpful_count = int(review.find_element('class name',
+                                                    'pkWtMe').text.strip())
+        except NoSuchElementException:
+            helpful_count = 0
+        try:
+            more_btn = review.find_element('class name', 'w8nwRe')
+            driver.execute_script("arguments[0].scrollIntoView(true);",
+                                  more_btn)
+            more_btn.click()
+            time.sleep(1)
+        except (NoSuchElementException, ElementClickInterceptedException):
+            pass
+        try:
+            text = review.find_element('class name', 'wiI7pd').text.strip()
+        except NoSuchElementException:
+            text = np.nan
+        try:
+            _ = review.find_element('class name', 'nM6d2c').text
+            response = review.find_element(
+                'class name', 'CDe7pd').find_element('class name',
+                                                     'wiI7pd').text.strip()
+            response_date = review.find_element('css selector',
+                                                'span.DZSIDd').text
+        except NoSuchElementException:
+            response, response_date = np.nan, np.nan
+
+        all_reviews.append({
+            'download_date': datetime.today(),
+            'source': 'https://www.google.com/maps/',
+            'category': 'отзыв',
+            'product': driver.title,
+            'url': url,
+            'date': date,
+            'product_name': np.nan,
+            'author': author,
+            'text': text,
+            'response': response,
+            'response_date': response_date,
+            'rating': float(rating),
+            'helpful_count': helpful_count,
+            'address': address})
+    return all_reviews
+
+
+def parse_google_maps(
+        link_to_offices: str, search_years: Set[int]) -> pd.DataFrame:
+    """
+    Collects reviews to offices from Google Maps.
+
+    Args:
+        link_to_offices: url to the page with offices
+        search_years: set of years for which the search is carried out
+
+    Returns:
+        pd.DataFrame with reviews
+    """
+    # links_to_offices = get_links_to_offices_google(link_to_offices)
+    links_to_offices = [link_to_offices]
+    all_reviews = []
+    for url in tqdm(links_to_offices):
+        print(f'Parsing {url}')
+        all_reviews.extend(parse_one_office_google_maps(url))
+    google_maps_df = pd.DataFrame(all_reviews)
+    google_maps_df = format_and_save_dataframe(google_maps_df, search_years)
+    return google_maps_df
+
+
+def get_google_play_reviews(
+        app_id: str, review_count: int) -> List[Dict[str, Any]]:
+    """
+    Collects reviews from Google Play via google_play_scraper API.
+    Link to API: https://pypi.org/project/google-play-scraper/
+
+    Args:
+        app_id: id of the app for which reviews are collected
+        review_count: the number of reviews to be collected
+
+    Returns:
+        list of dicts with review information
+    """
+    newest_reviews = reviews_all(
+        app_id,
+        sleep_milliseconds=50,
+        lang='ru',
+        country='ru',
+        sort=Sort.NEWEST,
+        count=review_count)
+    print(f'Found {len(newest_reviews)} newest reviews.')
+    relevant_reviews = reviews_all(
+        app_id,
+        sleep_milliseconds=50,
+        lang='ru',
+        country='ru',
+        sort=Sort.MOST_RELEVANT,
+        count=review_count)
+    print(f'Found {len(relevant_reviews)} most relevant reviews.')
+    all_reviews = newest_reviews + relevant_reviews
+    return all_reviews
+
+
+def parse_google_play(app_link: str, review_count: int,
+                      search_years: Set[int]) -> pd.DataFrame:
+    """
+    Collects Google Play reviews and saves them to a pd.DataFrame.
+
+    Args:
+        app_link: url to the app for which reviews are collected
+        review_count: the number of reviews to be collected
+        search_years: set of years for which the search is carried out
+
+    Returns:
+        pd.DataFrame with reviews
+    """
+    app_id = app_link.split('=')[-1]
+    all_reviews = get_google_play_reviews(app_id, review_count)
+    gp_df = pd.DataFrame.from_records(all_reviews)
+    gp_df.drop(
+        columns=['reviewId', 'userImage', 'reviewCreatedVersion', 'appVersion'],
+        inplace=True)
+    gp_df.rename(
+        columns={'userName': 'author', 'content': 'text', 'score': 'rating',
+                 'thumbsUpCount': 'helpful_count', 'at': 'date',
+                 'replyContent': 'response', 'repliedAt': 'response_date'},
+        inplace=True)
+    gp_df['download_date'] = datetime.today()
+    gp_df['source'] = 'https://play.google.com/'
+    gp_df['category'] = 'отзыв'
+    gp_df['product'] = np.nan
+    gp_df['url'] = app_link
+    gp_df['product_name'] = np.nan
+    gp_df['address'] = np.nan
+    gp_df = gp_df[['download_date', 'source', 'category', 'product', 'url',
+                   'date', 'product_name', 'author', 'text', 'response',
+                   'response_date', 'rating', 'helpful_count', 'address']]
+    gp_df = format_and_save_dataframe(gp_df, search_years)
+    return gp_df
